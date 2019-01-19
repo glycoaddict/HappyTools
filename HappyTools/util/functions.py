@@ -85,7 +85,7 @@ class Functions(object):
             self.apply_calibration_function(self)
             self.chrom.filename = (Path(master.batch_folder.get()) /
                                    '_'.join(['calibrated',
-                                   Path(self.chrom.filename).stem + '.txt']))
+                                             (Path(self.chrom.filename).stem).replace('calibrated_','') + '.txt']))
         else:
             data.filename = (Path(master.batch_folder.get()) /
                              '_'.join(['uncalibrated',
