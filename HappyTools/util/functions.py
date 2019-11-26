@@ -5,7 +5,7 @@ from HappyTools.util.output import Output
 from HappyTools.bin.chromatogram import Chromatogram
 from HappyTools.bin.peak import Peak
 
-import logging
+import logging, ast
 from bisect import bisect_left, bisect_right
 from numpy import greater, less, linspace, poly1d, polyfit
 from os import W_OK, access
@@ -18,12 +18,6 @@ class Functions(object):
     def __init__(self, master):
         self.logger = logging.getLogger(__name__)
         self.master = master
-
-    def apply_calibration_function(self, master):
-        ''' TODO
-        '''
-        time, intensity = zip(*master.chrom.trace.chrom_data)
-        master.chrom.trace.chrom_data = list(zip(master.function(time), intensity))
 
     def batch_process(self, master):
         if master.batch_folder.get():
@@ -38,51 +32,85 @@ class Functions(object):
             self.batch_folder = master.batch_folder
             bar = progressbar.ProgressBar(self)
 
+            # initialise
+            calibrated_files = []
+            anal_files = []
+            outpath = ''
+
             if master.cal_file.get():
 
-                self.reference = self.read_peak_list(master.cal_file.get())
-                files = self.get_calibration_files(self)
+
+                # check if list and force into list
+                try:
+                    cal_list = list(ast.literal_eval(master.cal_file.get()))
+                except SyntaxError:
+                    cal_list = [master.cal_file.get()]
+
+                files = get_calibration_files(self)
 
                 for index, file in enumerate(files):
-                    try:
-                        self.chrom = Chromatogram(file)
-                        self.calibrate_chrom(self)
-                        bar.update_progress_bar(bar.progressbar,
-                            bar.calibration_percentage, index, len(files))
-                    except Exception as e:
-                        self.logger.error(e)
+
+                    self.chrom = Chromatogram(file)
+
+                    for cal_file in cal_list:
+
+                        self.reference = self.read_peak_list(cal_file)
+
+                        try:
+                            # self.chrom = Chromatogram(file)
+                            self.calibrate_chrom(self)
+                            calibrated_files.append(self.chrom.filename)
+                            self.chrom = Chromatogram(self.chrom.filename)
+                            bar.update_progress_bar(bar.progressbar,
+                                                    bar.calibration_percentage, index, len(files))
+                        except Exception as e:
+                            self.logger.error(e)
+
 
             bar.update_progress_bar(bar.progressbar,
-                bar.calibration_percentage, 1, 1)
+                                    bar.calibration_percentage, 1, 1)
+
+
 
             if master.anal_file.get():
 
                 self.results = []
                 self.reference = self.read_peak_list(master.anal_file.get())
-                files = self.get_quantitation_files(self)
+                files = get_quantitation_files(self)
 
                 for index, chromatogram in enumerate(files):
                     try:
                         self.chrom = Chromatogram(chromatogram)
-                        self.results.append({'file': Path(chromatogram).name,
-                            'results': self.quantify_chrom(self)})
+                        res = {'file': Path(chromatogram).name,
+                                             'results': self.quantify_chrom(self)}
+                        self.results.append(res)
+
                         bar.update_progress_bar(bar.progressbar2,
-                            bar.quantitation_percentage, index, len(files))
+                                                bar.quantitation_percentage, index, len(files))
                     except Exception as e:
                         self.logger.error(e)
 
                 self.output = Output(self)
                 self.output.init_output_file(self)
                 self.output.build_output_file(self)
+                outpath = self.output.outpath
 
                 bar.update_progress_bar(bar.progressbar2,
-                    bar.quantitation_percentage, 1, 1)
+                                        bar.quantitation_percentage, 1, 1)
+
+
+
+        # spit back out the resultant files
+        return dict(calibrated_files=calibrated_files,
+                    output_path=outpath,
+                    )
+
 
     def calibrate_chrom(self, master):
         self.time_pairs = self.find_peak(master)
         if len(self.time_pairs) >= master.settings.min_peaks:
-            self.function = self.determine_calibration_function(self)
-            self.apply_calibration_function(self)
+            self.function = determine_calibration_function(self)
+            apply_calibration_function(self)
             self.chrom.filename = (Path(master.batch_folder.get()) /
                                    '_'.join(['calibrated',
                                              (Path(self.chrom.filename).stem).replace('calibrated_','') + '.txt']))
@@ -91,64 +119,6 @@ class Functions(object):
                              '_'.join(['uncalibrated',
                              Path(self.chrom.filename).stem + '.txt']))
         self.write_data(master)
-
-    def create_tooltip(self, master, widget, text):
-        '''Create a tooltip.
-
-        This function will create a tooltip and assign it to the widget that
-        was handed to this function. The widget will then show the provided
-        text upon a mouseover.
-
-        Keyword arguments:
-        widget -- tkinter object
-        text -- string
-        '''
-        toolTip = ToolTip(widget)
-
-        def enter(event):
-            toolTip.showtip(text)
-
-        def leave(event):
-            toolTip.hidetip()
-
-        widget.bind('<Enter>', enter)
-        widget.bind('<Leave>', leave)
-
-    def check_disk_access(self, master):
-        disk_access = True
-        for directory in master.directories:
-            if not access(directory, W_OK):
-                disk_access = False
-        return disk_access
-
-    def determine_breakpoints(self, master):
-        time, intensity = zip(*master.chrom.trace.chrom_data)
-        low = bisect_left(time, master.time-master.window)
-        high = bisect_right(time, master.time+master.window)
-
-        f = InterpolatedUnivariateSpline(time[low:high], intensity[low:high])
-        f_prime = f.derivative()
-
-        new_x = linspace(time[low], time[high], 2500*(time[high]-time[low]))
-        new_prime_y = f_prime(new_x)
-
-        maxm = argrelextrema(new_prime_y, greater)
-        minm = argrelextrema(new_prime_y, less)
-
-        breaks = maxm[0].tolist() + minm[0].tolist()
-        breaks = sorted(breaks)
-
-        return breaks
-
-    def determine_calibration_function(self, master):
-        expected, observed = zip(*master.time_pairs)
-        if master.settings.use_UPC == 'False':
-            z = polyfit(observed, expected, 2)
-            function = poly1d(z)
-        elif master.settings.use_UPC == 'True':
-            raise NotImplementedError('Ultra performance calibration has not '+
-                'been implemented in the refactoring yet.')
-        return function
 
     def find_peak(self, master):
         ''' TODO
@@ -176,32 +146,6 @@ class Functions(object):
                 time_pairs.append((i[1], time[self.peak.low+max_index]))
 
         return time_pairs
-
-    def get_calibration_files(self, master):
-        ''' TODO
-        '''
-        calibration_files = []
-        for files in master.settings.calibration_filetypes:
-            for file in Path(master.batch_folder.get()).glob(files):
-                if file not in master.settings.exclusion_files:
-                    calibration_files.append(Path(master.batch_folder.get()) /
-                                             file)
-        return calibration_files
-
-    def get_quantitation_files(self, master):
-        ''' TODO
-        '''
-        quantitation_files = []
-        for files in master.settings.quantitation_filetypes:
-            for file in Path(master.batch_folder.get()).glob(files):
-                if file not in master.settings.exclusion_files:
-                    quantitation_files.append(Path(master.batch_folder.get()) /
-                                              file)
-        return quantitation_files
-
-    def peak_detection(self, master):
-        raise NotImplementedError('This feature is not implemented in the ' +
-                                  'refactor yet.')
 
     def quantify_chrom(self, master):
         ''' TODO
@@ -252,8 +196,8 @@ class Functions(object):
             self.peak.determine_total_area(self)
 
             # Data Subset (based on second derivative)
-            self.breaks = self.determine_breakpoints(self)
-            self.data_subset = self.subset_data(self)
+            self.breaks = determine_breakpoints(self)
+            self.data_subset = subset_data(self)
 
             # Gaussian fit
             self.peak.determine_gaussian_coefficients(self)
@@ -319,58 +263,9 @@ class Functions(object):
         return peaks
 
     def save_calibrants(self, master):
+        # TODO: Remove this function once this is implemented elsewhere
         raise NotImplementedError('This feature is not implemented in the ' +
                                   'refactor yet.')
-
-    def save_annotation(self, master):
-        raise NotImplementedError('This feature is not implemented in the ' +
-                                  'refactor yet.')
-
-    def subset_data(self, master):
-
-        max_point = 0
-        time, intensity = zip(*master.chrom.trace.chrom_data)
-        low = bisect_left(time, master.time-master.window)
-        high = bisect_right(time, master.time+master.window)
-
-        f = InterpolatedUnivariateSpline(time[low:high], intensity[low:high])
-        new_x = linspace(time[low], time[high], 2500*(time[high]-time[low]))
-        new_y = f(new_x)
-
-        x_data = new_x
-        y_data = new_y
-
-        # Subset the data
-        # Region from newY[0] to breaks[0]
-        try:
-            if max(new_y[0:master.breaks[0]]) > max_point:
-                max_point = max(new_y[0:master.breaks[0]])
-                x_data = new_x[0:master.breaks[0]]
-                y_data = new_y[0:master.breaks[0]]
-        except IndexError:
-            pass
-
-        # Regions between breaks[x] and breaks[x+1]
-        try:
-            for index, _ in enumerate(master.breaks):
-                if max(new_y[master.breaks[index]:master.breaks[index+1]]) > max_point:
-                    max_point = max(new_y[master.breaks[index]:
-                        master.breaks[index+1]])
-                    x_data = new_x[master.breaks[index]:master.breaks[index+1]]
-                    y_data = new_y[master.breaks[index]:master.breaks[index+1]]
-        except IndexError:
-            pass
-
-        # Region from break[-1] to newY[-1]
-        try:
-            if max(new_y[master.breaks[-1]:-1]) > max_point:
-                max_point = max(new_y[master.breaks[-1]:-1])
-                x_data = new_x[master.breaks[-1]:-1]
-                y_data = new_y[master.breaks[-1]:-1]
-        except IndexError:
-            pass
-
-        return list(zip(x_data, y_data))
 
     def write_data(self, master):
         ''' TODO
@@ -385,3 +280,140 @@ class Functions(object):
         except IOError:
             self.logger.error('File: '+str(Path(master.chrom.filename).name)+
                               ' could not be opened.')
+
+# Functions
+def apply_calibration_function(master):
+    ''' TODO
+    '''
+    time, intensity = zip(*master.chrom.trace.chrom_data)
+    master.chrom.trace.chrom_data = list(zip(master.function(time), intensity))
+
+def create_tooltip(widget, text):
+    '''Create a tooltip.
+
+    This function will create a tooltip and assign it to the widget that
+    was handed to this function. The widget will then show the provided
+    text upon a mouseover.
+
+    Keyword arguments:
+    widget -- tkinter object
+    text -- string
+    '''
+    toolTip = ToolTip(widget)
+
+    def enter(event):
+        toolTip.showtip(text)
+
+    def leave(event):
+        toolTip.hidetip()
+
+    widget.bind('<Enter>', enter)
+    widget.bind('<Leave>', leave)
+
+def check_disk_access(master):
+    disk_access = True
+    for directory in master.directories:
+        if not access(directory, W_OK):
+            disk_access = False
+    return disk_access
+
+def determine_breakpoints(master):
+    time, intensity = zip(*master.chrom.trace.chrom_data)
+    low = bisect_left(time, master.time-master.window)
+    high = bisect_right(time, master.time+master.window)
+
+    f = InterpolatedUnivariateSpline(time[low:high], intensity[low:high])
+    f_prime = f.derivative()
+
+    new_x = linspace(time[low], time[high], 2500*(time[high]-time[low]))
+    new_prime_y = f_prime(new_x)
+
+    maxm = argrelextrema(new_prime_y, greater)
+    minm = argrelextrema(new_prime_y, less)
+
+    breaks = maxm[0].tolist() + minm[0].tolist()
+    breaks = sorted(breaks)
+
+    return breaks
+
+def determine_calibration_function(master):
+    expected, observed = zip(*master.time_pairs)
+    if master.settings.use_UPC == 'False':
+        z = polyfit(observed, expected, 2)
+        function = poly1d(z)
+    elif master.settings.use_UPC == 'True':
+        raise NotImplementedError('Ultra performance calibration has not '+
+            'been implemented in the refactoring yet.')
+    return function
+
+def get_calibration_files(master):
+    ''' TODO
+    '''
+    calibration_files = []
+    for files in master.settings.calibration_filetypes:
+        for file in Path(master.batch_folder.get()).glob(files):
+            if file not in master.settings.exclusion_files:
+                calibration_files.append(Path(master.batch_folder.get()) /
+                                         file)
+        # this restricts the file processing to only 1 type, by the priority in the calibration extension list specified
+        # by breaking the loop whenever a match is found for any filetype.
+        if len(calibration_files) > 0:
+            break
+    return calibration_files
+
+def get_quantitation_files(master):
+    ''' TODO
+    '''
+    quantitation_files = []
+    for files in master.settings.quantitation_filetypes:
+        for file in Path(master.batch_folder.get()).glob(files):
+            if file not in master.settings.exclusion_files:
+                quantitation_files.append(Path(master.batch_folder.get()) /
+                                          file)
+    return quantitation_files
+
+def subset_data(master):
+
+    max_point = 0
+    time, intensity = zip(*master.chrom.trace.chrom_data)
+    low = bisect_left(time, master.time-master.window)
+    high = bisect_right(time, master.time+master.window)
+
+    f = InterpolatedUnivariateSpline(time[low:high], intensity[low:high])
+    new_x = linspace(time[low], time[high], 2500*(time[high]-time[low]))
+    new_y = f(new_x)
+
+    x_data = new_x
+    y_data = new_y
+
+    # Subset the data
+    # Region from newY[0] to breaks[0]
+    try:
+        if max(new_y[0:master.breaks[0]]) > max_point:
+            max_point = max(new_y[0:master.breaks[0]])
+            x_data = new_x[0:master.breaks[0]]
+            y_data = new_y[0:master.breaks[0]]
+    except IndexError:
+        pass
+
+    # Regions between breaks[x] and breaks[x+1]
+    try:
+        for index, _ in enumerate(master.breaks):
+            if max(new_y[master.breaks[index]:master.breaks[index+1]]) > max_point:
+                max_point = max(new_y[master.breaks[index]:
+                    master.breaks[index+1]])
+                x_data = new_x[master.breaks[index]:master.breaks[index+1]]
+                y_data = new_y[master.breaks[index]:master.breaks[index+1]]
+    except IndexError:
+        pass
+
+    # Region from break[-1] to newY[-1]
+    try:
+        if max(new_y[master.breaks[-1]:-1]) > max_point:
+            max_point = max(new_y[master.breaks[-1]:-1])
+            x_data = new_x[master.breaks[-1]:-1]
+            y_data = new_y[master.breaks[-1]:-1]
+    except IndexError:
+        pass
+
+    return list(zip(x_data, y_data))

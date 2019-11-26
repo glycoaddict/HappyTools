@@ -19,6 +19,9 @@ class Output(object):
         s = utc_datetime.strftime(master.settings.date_format)
         self.filename = s + '_' + master.settings.output
 
+        self.outpath = Path(master.batch_folder.get() /
+                            Path(self.filename))
+
 
     def build_header(self, master):
         header = ''
@@ -69,9 +72,13 @@ class Output(object):
             self.write_retention_time(self)
             self.write_retention_time_residual(self)
 
+        # should return the path of the output file.
+        return
+
     def init_output_file(self, master):
-        with Path(master.batch_folder.get() /
-                  Path(self.filename)).open('w') as fw:
+
+
+        with self.outpath.open('w') as fw:
             fw.write('HappyTools Settings\n')
             fw.write('Version:\t'+str(version.version)+'\n')
             fw.write('Build:\t'+str(version.build)+'\n')
