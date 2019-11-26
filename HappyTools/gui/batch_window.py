@@ -1,7 +1,9 @@
 from HappyTools.gui.output_window import OutputWindow
+from HappyTools.util.functions import create_tooltip
 import tkinter as tk
 import tkinter.filedialog as filedialog
-
+from HappyTools import custom_tools
+import os
 
 class batchWindow(object):
     def __init__(self, master):
@@ -41,9 +43,16 @@ class batchWindow(object):
                                       width=20,
                                       command=self.set_calibration_file)
         calibrationButton.grid(row=1, column=0, sticky=tk.W)
+
+
         calibrationLabel = tk.Label(tk.top, textvariable=self.cal_file,
-                                    width=20)
+                                    width=150)
         calibrationLabel.grid(row=1, column=1)
+
+        multicalibrationButton = tk.Button(top, text='Multi Calibration',
+                                      width=20,
+                                      command=self.set_calibration_files)
+        multicalibrationButton.grid(row=1, column=2, sticky=tk.W)
 
         analyteButton = tk.Button(top, text='Analyte File',
                                   width=20,
@@ -76,24 +85,24 @@ class batchWindow(object):
         self.top = top
 
         # Tooltips
-        self.functions.create_tooltip(
-            self, calibrationButton, 'This button will allow you to select ' +
+        create_tooltip(
+            calibrationButton, 'This button will allow you to select ' +
             'your calibration file, the program expects a tab separated ' +
             'text file where each line consists of a peak ID, peak RT and ' +
             'a RT window.')
 
-        self.functions.create_tooltip(
-            self, analyteButton, 'This button will allow you to select your ' +
+        create_tooltip(
+            analyteButton, 'This button will allow you to select your ' +
             'analyte file, the program expects a tab separated text file ' +
             'where each line consists of a peak ID, peak RT and a RT window.')
 
-        self.functions.create_tooltip(
-            self, batchButton, 'This button will allow you to select the ' +
+        create_tooltip(
+            batchButton, 'This button will allow you to select the ' +
             'folder where the chromatograms are stored that HappyTools will ' +
             'process.')
 
-        self.functions.create_tooltip(
-            self, outputButton, 'This button will open another window in ' +
+        create_tooltip(
+            outputButton, 'This button will open another window in ' +
             'which you can select which outputs you want HappyTools to show ' +
             'in the final summary.')
 
@@ -110,17 +119,54 @@ class batchWindow(object):
         """
         self.functions.batch_process(self)
 
-    def set_batch_folder(self):
+    def set_batch_folder(self, folder_path=''):
         """Ask for the batch folder.
         """
-        self.batch_folder.set(filedialog.askdirectory(
-            title='Batch Folder'))
+        print(f'Folder Path = {folder_path}')
+
+        if isinstance(folder_path, str):
+            if folder_path=='':
+                self.batch_folder.set(filedialog.askdirectory(
+                    title='Batch Folder'))
+            else:
+                if os.path.exists(folder_path):
+                    self.batch_folder.set(folder_path)
+                else:
+                    print(f'folder path does not exist: {folder_path}')
+                    self.batch_folder.set(filedialog.askdirectory(
+                        title='Batch Folder'))
+
+
 
     def set_calibration_file(self):
         """Ask for the calibration file.
         """
         self.cal_file.set(filedialog.askopenfilename(
             title='Calibration File'))
+
+    def set_calibration_files(self, file_list=[]):
+        """
+        ask for multiple calibration files
+        :return:
+        """
+
+        # handle strings as well as lists
+        if isinstance(file_list, str):
+            if len(file_list)>0:
+                formatted_list = [file_list]
+            else:
+                formatted_list = []
+
+        if isinstance(file_list, list):
+            if file_list==[]:
+                self.cal_file.set(custom_tools.getfiles('Calibration Files', '.ref'))
+            else:
+                self.cal_file.set(file_list)
+
+        else:
+            raise TypeError('A list was not passed to batch_window.set_calibration_files.py')
+
+
 
     def set_analyte_file(self):
         """Ask for the analyte file.

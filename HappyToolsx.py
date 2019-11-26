@@ -21,6 +21,8 @@
 import HappyTools.util.requirement_checker as req_check
 req_check.check_requirements()
 
+import os
+
 # General imports
 from matplotlib.backends.backend_tkagg import (
     FigureCanvasTkAgg, NavigationToolbar2Tk
@@ -35,7 +37,9 @@ from pathlib import Path, PurePath
 
 # Custom libraries
 from HappyTools.util.peak_detection import PeakDetection
-from HappyTools.util.functions import Functions
+from HappyTools.util.functions import (Functions, check_disk_access,
+                                       determine_calibration_function,
+                                       apply_calibration_function)
 from HappyTools.util.output import Output
 
 # Gui elements
@@ -51,11 +55,21 @@ import HappyTools.gui.version as version
 from HappyTools.bin.chromatogram import Chromatogram, finalize_plot
 
 # Directories
+
+"""
+Matt - replaced os.getcwd() with the directory of the current script.
+This makes it more robust against being moved around, or
+being called from a different location because the os.cwd() will
+still give the originating script's location instead of this script's 
+location.  
+"""
+
+path_that_this_script_runs_from = Path.cwd()
 directories = [
-    Path.cwd() / 'HappyTools' / 'plugins',
-    Path.cwd() / 'HappyTools' / 'gui',
-    Path.cwd() / 'HappyTools' / 'bin',
-    Path.cwd() / 'HappyTools' / 'util'
+    path_that_this_script_runs_from / 'HappyTools' / 'plugins',
+    path_that_this_script_runs_from / 'HappyTools' / 'gui',
+    path_that_this_script_runs_from / 'HappyTools' / 'bin',
+    path_that_this_script_runs_from / 'HappyTools' / 'util'
 ]
 
 
@@ -68,10 +82,19 @@ NavigationToolbar2Tk.dynamic_update = dynamic_update
 # Applicatiom
 class HappyToolsGui(object):
     @classmethod
-    def run(cls):
+    def run(cls):        
         root = tk.Tk()
-        HappyToolsGui(root)
+        cls.gui = HappyToolsGui(root)
         root.mainloop()
+
+    @classmethod
+    def run_without_loop(cls):
+        root = tk.Tk()
+        cls.gui = HappyToolsGui(root)
+        return root, cls.gui
+        
+        
+
 
     def __init__(self, master):
         self.output_window_open = tk.IntVar(value=0)
@@ -93,19 +116,24 @@ class HappyToolsGui(object):
         self.logger = logging.getLogger(__name__)
         self.functions = Functions(self) # Change functions from class to non
 
+        """
+        Matt - Edited error message to show the tested directories because that is more diagnostic
+        """
+
         # ACCESS CHECK
         self.directories = directories
-        if not self.functions.check_disk_access(self):
+        if not check_disk_access(self):
             messagebox.showinfo(
                 'Access Error', 'HappyTools does ' +
                 'not have sufficient disk access rights. Please close ' +
                 'HappyTools and check if the current user has read/' +
-                'write access to all folders in the Happytools folder.')
+                'write access to all folders in the Happytools folder.' +
+                '\n\nTested filepaths were: {}'.format(self.directories[0]))
 
         # SETTINGS
         self.settings = Settings(self)
         if (Path.cwd() / self.settings.settings).is_file():
-            self.settings.read_settings(self.settings)
+            self.settings.read_settings()
 
         # CANVAS
         self.fig = figure.Figure(figsize=(12,6))
@@ -249,8 +277,8 @@ class HappyToolsGui(object):
                 self.progress.update_progress_bar(self)
 
                 self.time_pairs = self.functions.find_peak(self)
-                self.function = self.functions.determine_calibration_function(self)
-                self.functions.apply_calibration_function(self)
+                self.function = determine_calibration_function(self)
+                apply_calibration_function(self)
 
         except Exception as e:
             self.logger.error(e)
@@ -266,7 +294,7 @@ class HappyToolsGui(object):
         self.master.quit()
 
     def open_batch_window(self):
-        batchWindow(self)
+        return batchWindow(self)
 
     def normalize_chromatogram(self):
         try:
@@ -355,5 +383,8 @@ class HappyToolsGui(object):
             self.logger.error(e)
 
 # Call the main app
+
+
+
 if __name__ == '__main__':
     HappyToolsGui.run()
